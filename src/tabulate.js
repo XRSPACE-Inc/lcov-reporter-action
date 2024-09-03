@@ -47,7 +47,7 @@ function shouldBeIncluded(fileName, options) {
 	if (!options.shouldFilterChangedFiles) {
 		return true
 	}
-	return options.changedFiles.includes(fileName.replace(options.prefix, ""))
+	return options.changedFiles.includes(`${options.prefix}${fileName}`)
 }
 
 function toFolder(path) {
