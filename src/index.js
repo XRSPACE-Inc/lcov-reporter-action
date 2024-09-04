@@ -10,6 +10,7 @@ import { deleteOldComments } from "./delete_old_comments"
 import { normalisePath } from "./util"
 
 const MAX_COMMENT_CHARS = 65536
+const MAX_JOB_SUMMARY_CHARS = 1000 * 1024
 
 async function main() {
 	const token = core.getInput("github-token")
@@ -19,6 +20,10 @@ async function main() {
 	const lcovFile = path.join(
 		workingDir,
 		core.getInput("lcov-file") || "./coverage/lcov.info",
+	)
+	const saveFile = path.join(
+		workingDir,
+		core.getInput("save-file") || "./coverage/coverage-report.md",
 	)
 	const baseFile = core.getInput("lcov-base")
 	const shouldFilterChangedFiles =
@@ -42,7 +47,7 @@ async function main() {
 
 	const options = {
 		repository: context.payload.repository.full_name,
-		prefix: normalisePath(`${process.env.GITHUB_WORKSPACE}/`),
+		prefix: normalisePath(path.join(workingDir).replace(/\.\/(.*)/, '$1')),
 		workingDir,
 	}
 
@@ -69,14 +74,15 @@ async function main() {
 
 	const lcov = await parse(raw)
 	const baselcov = baseRaw && (await parse(baseRaw))
-	const body = diff(lcov, baselcov, options).substring(0, MAX_COMMENT_CHARS)
+	const body = diff(lcov, baselcov, options)
 
 	if (shouldDeleteOldComments) {
 		await deleteOldComments(githubClient, options, context)
 	}
 
 	switch (postTo) {
-		case "comment":
+		case "comment": {
+			const strippedBody = body.substring(0, MAX_COMMENT_CHARS)
 			if (
 				context.eventName === "pull_request" ||
 				context.eventName === "pull_request_target"
@@ -85,21 +91,28 @@ async function main() {
 					repo: context.repo.repo,
 					owner: context.repo.owner,
 					issue_number: context.payload.pull_request.number,
-					body: body,
+					body: strippedBody,
 				})
 			} else if (context.eventName === "push") {
 				await githubClient.repos.createCommitComment({
 					repo: context.repo.repo,
 					owner: context.repo.owner,
 					commit_sha: options.commit,
-					body: body,
+					body: strippedBody,
 				})
 			}
 			break
-		case "job-summary":
-			core.summary.addRaw(body)
+		}
+		case "job-summary": {
+			const strippedBody = body.substring(0, MAX_JOB_SUMMARY_CHARS)
+			core.summary.addRaw(strippedBody)
 			await core.summary.write()
 			break
+		}
+		case "file": {
+			await fs.writeFile(saveFile, body)
+			break
+		}
 		default:
 			core.warning(`Unknown post-to value: '${postTo}'`)
 	}
